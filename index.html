@@ -1,0 +1,447 @@
+<!DOCTYPE html>
+<!--
+  ============================================================================
+  Calculadora de Hidromiel — PWA Offline-First
+  Marco rector: PASEF v1.0 STABLE (sin modificaciones)
+  Alojamiento: GitHub Pages (archivos: index.html + sw.js en la MISMA carpeta)
+  Objetivo: Samsung Galaxy A34 5G · Android 16 · One UI 8.5 · Chrome/Brave/Samsung Internet
+  ============================================================================
+  NOTA TÉCNICA: los navegadores NO permiten registrar un Service Worker desde
+  un blob:/data: URL (restricción de seguridad). El único registro válido es un
+  archivo real del mismo origen, por eso se incluye un sw.js mínimo.
+  El manifest SÍ se genera dinámicamente (Blob) desde este mismo archivo.
+-->
+<html lang="es">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
+<meta name="theme-color" content="#14110d">
+<meta name="color-scheme" content="dark light">
+<meta name="mobile-web-app-capable" content="yes">
+<meta name="apple-mobile-web-app-capable" content="yes">
+<meta name="description" content="Calculadora de hidromiel: miel, agua y nutrientes según volumen y densidad inicial (OG).">
+<title>Calculadora de Hidromiel</title>
+
+<style>
+/* ---------- Tokens de diseño (modo oscuro por defecto) ---------- */
+:root{
+  --bg:#14110d; --surface:#1e1913; --surface-2:#271f16; --border:#3a2f21;
+  --text:#f3ead9; --muted:#a8997f; --accent:#e8a92c; --accent-ink:#1a1204;
+  --ok:#5fbf7a; --warn:#e8a92c; --bad:#e5645a; --radius:18px;
+  --shadow:0 6px 24px rgba(0,0,0,.35);
+}
+:root[data-theme="light"]{
+  --bg:#faf5ea; --surface:#fffdf7; --surface-2:#f3ead6; --border:#e2d4b5;
+  --text:#2a2012; --muted:#7a6a4d; --accent:#c78a0a; --accent-ink:#fff;
+  --shadow:0 6px 24px rgba(90,70,30,.12);
+}
+*{box-sizing:border-box;-webkit-tap-highlight-color:transparent}
+html{background:var(--bg)}
+body{
+  margin:0; background:var(--bg); color:var(--text);
+  font:16px/1.45 system-ui,-apple-system,"Segoe UI",Roboto,sans-serif;
+  padding:env(safe-area-inset-top) env(safe-area-inset-right) env(safe-area-inset-bottom) env(safe-area-inset-left);
+}
+.wrap{max-width:960px;margin:0 auto;padding:16px}
+
+/* ---------- Cabecera ---------- */
+header{display:flex;align-items:center;justify-content:space-between;gap:12px;margin-bottom:14px}
+h1{font-size:1.25rem;margin:0;letter-spacing:.2px}
+h1 small{display:block;font-weight:400;color:var(--muted);font-size:.78rem}
+.hdr-right{display:flex;align-items:center;gap:8px}
+.pill{display:inline-flex;align-items:center;gap:6px;padding:6px 10px;border-radius:999px;
+  background:var(--surface);border:1px solid var(--border);font-size:.78rem;color:var(--muted)}
+.dot{width:9px;height:9px;border-radius:50%;background:var(--ok)}
+.pill.offline .dot{background:var(--bad)}
+.icon-btn{min-width:44px;min-height:44px;border-radius:12px;border:1px solid var(--border);
+  background:var(--surface);color:var(--text);font-size:1.1rem;cursor:pointer}
+
+/* ---------- Aviso de actualización ---------- */
+#updateBanner{display:none;align-items:center;justify-content:space-between;gap:10px;
+  background:var(--accent);color:var(--accent-ink);padding:12px 14px;border-radius:14px;margin-bottom:14px;font-weight:600}
+#updateBanner.show{display:flex}
+#updateBanner button{min-height:40px;padding:0 14px;border:0;border-radius:10px;
+  background:var(--accent-ink);color:var(--accent);font-weight:700;cursor:pointer}
+
+/* ---------- Layout y tarjetas ---------- */
+.grid{display:grid;gap:14px;grid-template-columns:1fr}
+@media(min-width:760px){.grid{grid-template-columns:1fr 1fr}.span2{grid-column:span 2}}
+.card{background:var(--surface);border:1px solid var(--border);border-radius:var(--radius);padding:16px;box-shadow:var(--shadow)}
+.card h2{margin:0 0 12px;font-size:.8rem;text-transform:uppercase;letter-spacing:1.2px;color:var(--muted);font-weight:600}
+
+/* ---------- Controles ---------- */
+label{display:block;font-size:.9rem;color:var(--muted);margin-bottom:6px}
+.stepper{display:flex;gap:8px;align-items:stretch}
+.stepper button{width:56px;min-height:56px;border-radius:14px;border:1px solid var(--border);
+  background:var(--surface-2);color:var(--text);font-size:1.6rem;cursor:pointer;touch-action:manipulation}
+.stepper button:active{transform:scale(.96);background:var(--accent);color:var(--accent-ink)}
+.stepper input{flex:1;min-width:0;text-align:center;font-size:1.5rem;font-weight:700;color:var(--text);
+  background:var(--surface-2);border:1px solid var(--border);border-radius:14px;padding:0 8px}
+input:focus,select:focus,button:focus-visible{outline:2px solid var(--accent);outline-offset:2px}
+.field{margin-bottom:18px}
+.field:last-child{margin-bottom:0}
+input[type=range]{width:100%;accent-color:var(--accent);height:36px;margin-top:6px}
+.chips{display:flex;flex-wrap:wrap;gap:8px;margin-top:8px}
+.chip{min-height:44px;padding:0 14px;border-radius:999px;border:1px solid var(--border);
+  background:var(--surface-2);color:var(--text);cursor:pointer;font-size:.85rem}
+.chip.active{background:var(--accent);color:var(--accent-ink);border-color:var(--accent);font-weight:700}
+select{width:100%;min-height:48px;border-radius:12px;background:var(--surface-2);color:var(--text);
+  border:1px solid var(--border);padding:0 10px;font-size:1rem}
+.seg{display:grid;grid-template-columns:repeat(3,1fr);gap:6px}
+.msg{min-height:1.2em;font-size:.85rem;margin-top:8px}
+.msg.warn{color:var(--warn)} .msg.bad{color:var(--bad)}
+
+/* ---------- Resultados ---------- */
+.results{display:grid;gap:12px;grid-template-columns:1fr 1fr}
+@media(min-width:760px){.results{grid-template-columns:repeat(3,1fr)}}
+.res{background:var(--surface-2);border:1px solid var(--border);border-radius:14px;padding:14px}
+.res .k{font-size:.75rem;color:var(--muted);text-transform:uppercase;letter-spacing:.8px}
+.res .v{font-size:1.7rem;font-weight:800;color:var(--accent);line-height:1.15;margin-top:4px;font-variant-numeric:tabular-nums}
+.res .v small{font-size:.9rem;color:var(--text);font-weight:600}
+.res .s{font-size:.8rem;color:var(--muted);margin-top:2px}
+.note{font-size:.8rem;color:var(--muted);margin:12px 0 0}
+details summary{cursor:pointer;color:var(--muted);min-height:44px;display:flex;align-items:center}
+.row{display:flex;justify-content:space-between;gap:10px;flex-wrap:wrap}
+#installBtn{display:none;min-height:44px;padding:0 14px;border-radius:12px;border:0;
+  background:var(--accent);color:var(--accent-ink);font-weight:700;cursor:pointer}
+footer{text-align:center;color:var(--muted);font-size:.75rem;padding:18px 0 28px}
+</style>
+</head>
+
+<body>
+<div class="wrap">
+
+  <!-- ===== Cabecera: título, estado de conexión y tema ===== -->
+  <header>
+    <h1>🍯 Calculadora de Hidromiel<small>Miel · Agua · Nutrientes</small></h1>
+    <div class="hdr-right">
+      <span id="netPill" class="pill" role="status" aria-live="polite"><span class="dot"></span><span id="netText">Online</span></span>
+      <button id="themeBtn" class="icon-btn" aria-label="Cambiar tema">🌙</button>
+    </div>
+  </header>
+
+  <!-- ===== Aviso de nueva versión ===== -->
+  <div id="updateBanner" role="alert">
+    <span>Nueva versión disponible</span>
+    <button id="updateBtn">Actualizar</button>
+  </div>
+
+  <main class="grid">
+
+    <!-- ===== Entradas ===== -->
+    <section class="card" aria-labelledby="t-in">
+      <h2 id="t-in">Parámetros</h2>
+
+      <div class="field">
+        <label for="vol">Volumen total deseado (litros)</label>
+        <div class="stepper">
+          <button type="button" id="volMinus" aria-label="Disminuir volumen">−</button>
+          <input id="vol" type="text" inputmode="decimal" autocomplete="off" value="5">
+          <button type="button" id="volPlus" aria-label="Aumentar volumen">+</button>
+        </div>
+        <div id="volMsg" class="msg"></div>
+      </div>
+
+      <div class="field">
+        <label for="og">Densidad inicial objetivo (OG)</label>
+        <div class="stepper">
+          <button type="button" id="ogMinus" aria-label="Disminuir OG">−</button>
+          <input id="og" type="text" inputmode="decimal" autocomplete="off" value="1.100">
+          <button type="button" id="ogPlus" aria-label="Aumentar OG">+</button>
+        </div>
+        <input id="ogRange" type="range" min="1.040" max="1.160" step="0.001" value="1.100" aria-label="OG deslizador">
+        <div class="chips" id="presets">
+          <button type="button" class="chip" data-og="1.085">Seco · 1.085</button>
+          <button type="button" class="chip" data-og="1.100">Semidulce · 1.100</button>
+          <button type="button" class="chip" data-og="1.120">Dulce · 1.120</button>
+        </div>
+        <div id="ogMsg" class="msg"></div>
+      </div>
+
+      <details>
+        <summary>Ajustes avanzados</summary>
+        <div class="field">
+          <label for="honey">Aporte de azúcar de la miel</label>
+          <select id="honey">
+            <option value="32">Miel húmeda (32 PPG)</option>
+            <option value="35" selected>Miel estándar (35 PPG)</option>
+            <option value="37">Miel muy concentrada (37 PPG)</option>
+          </select>
+        </div>
+        <div class="field">
+          <label>Exigencia de nitrógeno de la levadura</label>
+          <div class="seg" id="demand">
+            <button type="button" class="chip" data-k="1.0">Baja</button>
+            <button type="button" class="chip active" data-k="1.3">Media</button>
+            <button type="button" class="chip" data-k="1.8">Alta</button>
+          </div>
+        </div>
+      </details>
+    </section>
+
+    <!-- ===== Resultados en tiempo real ===== -->
+    <section class="card" aria-labelledby="t-out">
+      <h2 id="t-out">Receta calculada</h2>
+      <div class="results" aria-live="polite">
+        <div class="res"><div class="k">Miel pura</div><div class="v" id="rHoney">—</div><div class="s" id="rHoneyKg"></div></div>
+        <div class="res"><div class="k">Agua</div><div class="v" id="rWater">—</div><div class="s" id="rWaterL"></div></div>
+        <div class="res"><div class="k">Nutriente (Fermaid-O)</div><div class="v" id="rNut">—</div><div class="s" id="rNutSplit"></div></div>
+        <div class="res"><div class="k">Levadura seca</div><div class="v" id="rYeast">—</div><div class="s" id="rGoFerm"></div></div>
+        <div class="res"><div class="k">Alcohol potencial</div><div class="v" id="rAbv">—</div><div class="s">FG supuesta 1.000</div></div>
+        <div class="res"><div class="k">Volumen de miel</div><div class="v" id="rHoneyVol">—</div><div class="s">densidad ≈ 1.42 kg/L</div></div>
+      </div>
+      <p class="note">
+        Miel (kg) = (OG − 1) × 1000 × V ÷ (PPG ÷ 0.1198). Agua = V − volumen de miel.
+        Nutriente: estimación práctica tipo TOSNA, repartida en 4 adiciones (24 h, 48 h, 72 h y día 7).
+        Son valores de referencia; ajusta según tu levadura y mide con hidrómetro.
+      </p>
+    </section>
+
+    <!-- ===== Estado PWA ===== -->
+    <section class="card span2">
+      <h2>Aplicación</h2>
+      <div class="row">
+        <span class="pill" id="swPill">Caché: comprobando…</span>
+        <button id="installBtn" type="button">Instalar en pantalla de inicio</button>
+      </div>
+    </section>
+  </main>
+
+  <footer>Funciona sin conexión tras la primera carga · v1.0.0</footer>
+</div>
+
+<script>
+"use strict";
+/* =====================================================================
+   1. UTILIDADES
+   ===================================================================== */
+const $ = (id) => document.getElementById(id);
+const store = {                                   // localStorage con protección (puede lanzar errores)
+  get(k, d){ try{ const v = localStorage.getItem(k); return v === null ? d : v; }catch(e){ return d; } },
+  set(k, v){ try{ localStorage.setItem(k, v); }catch(e){} }
+};
+const parseNum = (s) => parseFloat(String(s).replace(",", "."));   // acepta coma decimal
+const clamp = (n, a, b) => Math.min(b, Math.max(a, n));
+
+/* =====================================================================
+   2. MOTOR DE CÁLCULO
+   ===================================================================== */
+const LB_PER_GAL = 0.45359237 / 3.785411784;      // 0.1198 kg/L: convierte PPG a puntos por (kg/L)
+const HONEY_DENSITY = 1.42;                       // kg/L
+const YEAST_G_PER_L = 0.25;                       // g de levadura seca por litro
+const GOFERM_RATIO = 1.25;                        // g de Go-Ferm por g de levadura
+
+/** Devuelve la receta completa. Entradas: litros, OG, PPG de la miel, factor de exigencia. */
+function calcMead(volL, og, ppg, demandK){
+  const gp = (og - 1) * 1000;                          // puntos de gravedad
+  const honeyKg = gp * volL / (ppg / LB_PER_GAL);      // masa de miel
+  const honeyL = honeyKg / HONEY_DENSITY;              // volumen que ocupa la miel
+  const waterL = Math.max(0, volL - honeyL);           // agua para completar el volumen
+  const nutG = demandK * (gp / 100) * volL;            // Fermaid-O total (g)
+  const yeastG = YEAST_G_PER_L * volL;
+  return { honeyG: honeyKg * 1000, honeyKg, honeyL, waterL, waterMl: waterL * 1000,
+           nutG, nutDose: nutG / 4, yeastG, gofermG: yeastG * GOFERM_RATIO,
+           abv: (og - 1.000) * 131.25 };
+}
+
+/* =====================================================================
+   3. INTERFAZ
+   ===================================================================== */
+const el = { vol:$("vol"), og:$("og"), range:$("ogRange"), honey:$("honey"),
+             volMsg:$("volMsg"), ogMsg:$("ogMsg") };
+let demandK = parseFloat(store.get("mead.k", "1.3"));
+
+const f = (n, d=0) => n.toLocaleString("es-MX", { minimumFractionDigits:d, maximumFractionDigits:d });
+
+function render(){
+  const vol = parseNum(el.vol.value), og = parseNum(el.og.value);
+  const volOk = isFinite(vol) && vol >= 0.1 && vol <= 1000;
+  const ogOk  = isFinite(og)  && og  >= 1.000 && og <= 1.200;
+
+  // Mensajes de validación / advertencia
+  el.volMsg.className = "msg"; el.ogMsg.className = "msg";
+  el.volMsg.textContent = volOk ? "" : "Ingresa un volumen entre 0.1 y 1000 L.";
+  if(!volOk) el.volMsg.classList.add("bad");
+  if(!ogOk){ el.ogMsg.textContent = "Ingresa una OG entre 1.000 y 1.200."; el.ogMsg.classList.add("bad"); }
+  else if(og < 1.060 || og > 1.140){
+    el.ogMsg.textContent = "OG fuera del rango habitual (1.060–1.140): revisa la tolerancia de tu levadura.";
+    el.ogMsg.classList.add("warn");
+  } else el.ogMsg.textContent = "";
+
+  if(!(volOk && ogOk)) return;                          // no calcula con datos inválidos
+
+  const r = calcMead(vol, og, parseFloat(el.honey.value), demandK);
+  $("rHoney").innerHTML    = `${f(r.honeyG)} <small>g</small>`;
+  $("rHoneyKg").textContent = `${f(r.honeyKg, 3)} kg`;
+  $("rWater").innerHTML    = `${f(r.waterMl)} <small>mL</small>`;
+  $("rWaterL").textContent = `${f(r.waterL, 3)} L`;
+  $("rNut").innerHTML      = `${f(r.nutG, 1)} <small>g</small>`;
+  $("rNutSplit").textContent = `4 dosis de ${f(r.nutDose, 2)} g`;
+  $("rYeast").innerHTML    = `${f(r.yeastG, 1)} <small>g</small>`;
+  $("rGoFerm").textContent = `Go-Ferm: ${f(r.gofermG, 1)} g`;
+  $("rAbv").innerHTML      = `${f(r.abv, 1)} <small>% vol</small>`;
+  $("rHoneyVol").innerHTML = `${f(r.honeyL, 2)} <small>L</small>`;
+
+  // Sincroniza deslizador y chips; guarda estado
+  el.range.value = og;
+  document.querySelectorAll("#presets .chip").forEach(c =>
+    c.classList.toggle("active", Math.abs(parseFloat(c.dataset.og) - og) < 0.0005));
+  store.set("mead.vol", vol); store.set("mead.og", og); store.set("mead.ppg", el.honey.value);
+}
+
+// Botones +/− (volumen en pasos de 0.5 L, OG en pasos de 0.005)
+function nudge(input, delta, min, max, dec){
+  const cur = parseNum(input.value); const base = isFinite(cur) ? cur : min;
+  input.value = clamp(base + delta, min, max).toFixed(dec);
+  render();
+}
+$("volMinus").onclick = () => nudge(el.vol, -0.5, 0.5, 1000, 1);
+$("volPlus").onclick  = () => nudge(el.vol,  0.5, 0.5, 1000, 1);
+$("ogMinus").onclick  = () => nudge(el.og, -0.005, 1.000, 1.200, 3);
+$("ogPlus").onclick   = () => nudge(el.og,  0.005, 1.000, 1.200, 3);
+
+el.vol.addEventListener("input", render);
+el.og.addEventListener("input", render);
+el.honey.addEventListener("change", render);
+el.range.addEventListener("input", () => { el.og.value = parseFloat(el.range.value).toFixed(3); render(); });
+$("presets").addEventListener("click", (e) => {
+  const b = e.target.closest(".chip"); if(!b) return;
+  el.og.value = parseFloat(b.dataset.og).toFixed(3); render();
+});
+$("demand").addEventListener("click", (e) => {
+  const b = e.target.closest(".chip"); if(!b) return;
+  demandK = parseFloat(b.dataset.k); store.set("mead.k", demandK);
+  document.querySelectorAll("#demand .chip").forEach(c => c.classList.toggle("active", c === b));
+  render();
+});
+
+// Restaurar valores guardados
+el.vol.value = store.get("mead.vol", "5");
+el.og.value  = parseFloat(store.get("mead.og", "1.100")).toFixed(3);
+el.honey.value = store.get("mead.ppg", "35");
+document.querySelectorAll("#demand .chip").forEach(c =>
+  c.classList.toggle("active", parseFloat(c.dataset.k) === demandK));
+
+/* ---------- Tema (oscuro por defecto) ---------- */
+function applyTheme(t){
+  document.documentElement.dataset.theme = t;
+  $("themeBtn").textContent = t === "dark" ? "🌙" : "☀️";
+  document.querySelector('meta[name="theme-color"]').content = t === "dark" ? "#14110d" : "#faf5ea";
+}
+applyTheme(store.get("mead.theme", "dark"));
+$("themeBtn").onclick = () => {
+  const t = document.documentElement.dataset.theme === "dark" ? "light" : "dark";
+  store.set("mead.theme", t); applyTheme(t);
+};
+
+/* ---------- Indicador Online/Offline ---------- */
+function updateNet(){
+  const on = navigator.onLine;
+  $("netPill").classList.toggle("offline", !on);
+  $("netText").textContent = on ? "Online" : "Offline";
+}
+addEventListener("online", updateNet); addEventListener("offline", updateNet); updateNet();
+
+/* =====================================================================
+   4. PWA: MANIFEST DINÁMICO (Blob) + ICONOS GENERADOS CON CANVAS
+   ===================================================================== */
+function makeIcon(size){                      // dibuja un hexágono de miel
+  const c = document.createElement("canvas"); c.width = c.height = size;
+  const g = c.getContext("2d");
+  g.fillStyle = "#14110d"; g.fillRect(0, 0, size, size);       // fondo completo (compatible con "maskable")
+  const cx = size/2, cy = size/2, R = size*0.30;
+  g.beginPath();
+  for(let i=0;i<6;i++){ const a = Math.PI/3*i - Math.PI/6; g.lineTo(cx+R*Math.cos(a), cy+R*Math.sin(a)); }
+  g.closePath(); g.fillStyle = "#e8a92c"; g.fill();
+  g.lineWidth = size*0.03; g.strokeStyle = "#a86f0a"; g.stroke();
+  g.fillStyle = "#14110d"; g.font = `bold ${size*0.26}px system-ui,sans-serif`;
+  g.textAlign = "center"; g.textBaseline = "middle"; g.fillText("M", cx, cy + size*0.01);
+  return c.toDataURL("image/png");
+}
+(function injectManifest(){
+  try{
+    const base = new URL("./", location.href).href;        // URL absoluta de la carpeta (requerida en manifest tipo blob)
+    const manifest = {
+      id: base, name: "Calculadora de Hidromiel", short_name: "Hidromiel",
+      description: "Calcula miel, agua y nutrientes para tu hidromiel.",
+      start_url: base, scope: base, display: "standalone", orientation: "portrait",
+      background_color: "#14110d", theme_color: "#14110d", lang: "es",
+      icons: [
+        { src: makeIcon(192), sizes: "192x192", type: "image/png", purpose: "any maskable" },
+        { src: makeIcon(512), sizes: "512x512", type: "image/png", purpose: "any maskable" }
+      ]
+    };
+    const blob = new Blob([JSON.stringify(manifest)], { type: "application/manifest+json" });
+    const link = document.createElement("link");
+    link.rel = "manifest"; link.href = URL.createObjectURL(blob);
+    document.head.appendChild(link);
+    const apple = document.createElement("link");           // icono para "añadir a inicio" en otros navegadores
+    apple.rel = "apple-touch-icon"; apple.href = makeIcon(192);
+    document.head.appendChild(apple);
+  }catch(e){ console.warn("Manifest dinámico no disponible:", e); }
+})();
+
+/* ---------- Botón de instalación ---------- */
+let deferredPrompt = null;
+addEventListener("beforeinstallprompt", (e) => {
+  e.preventDefault(); deferredPrompt = e; $("installBtn").style.display = "inline-block";
+});
+$("installBtn").onclick = async () => {
+  if(!deferredPrompt) return;
+  deferredPrompt.prompt(); await deferredPrompt.userChoice;
+  deferredPrompt = null; $("installBtn").style.display = "none";
+};
+addEventListener("appinstalled", () => { $("installBtn").style.display = "none"; });
+
+/* =====================================================================
+   5. SERVICE WORKER: REGISTRO + AVISO DE ACTUALIZACIÓN
+   ===================================================================== */
+let waitingWorker = null;
+function showUpdate(){ $("updateBanner").classList.add("show"); }
+
+$("updateBtn").onclick = () => {
+  if(waitingWorker) waitingWorker.postMessage({ type: "SKIP_WAITING" });  // activa el nuevo SW; recarga en controllerchange
+  else location.reload();                                                  // contenido nuevo ya cacheado
+};
+
+if("serviceWorker" in navigator){
+  addEventListener("load", async () => {
+    try{
+      const reg = await navigator.serviceWorker.register("./sw.js");
+      $("swPill").textContent = navigator.serviceWorker.controller
+        ? "Caché: lista para usar sin conexión" : "Caché: preparando (recarga una vez)";
+
+      if(reg.waiting && navigator.serviceWorker.controller){ waitingWorker = reg.waiting; showUpdate(); }
+      reg.addEventListener("updatefound", () => {
+        const nw = reg.installing;
+        nw && nw.addEventListener("statechange", () => {
+          if(nw.state === "installed" && navigator.serviceWorker.controller){ waitingWorker = nw; showUpdate(); }
+        });
+      });
+      // Revisa actualizaciones cuando la app vuelve a primer plano
+      document.addEventListener("visibilitychange", () => { if(!document.hidden) reg.update().catch(()=>{}); });
+
+      navigator.serviceWorker.ready.then(() => {
+        if(navigator.serviceWorker.controller) $("swPill").textContent = "Caché: lista para usar sin conexión";
+      });
+    }catch(err){
+      $("swPill").textContent = "Caché no disponible (¿falta sw.js o no es HTTPS?)";
+      console.warn("SW:", err);
+    }
+  });
+
+  // El SW avisa si el HTML en la red cambió respecto al cacheado
+  navigator.serviceWorker.addEventListener("message", (e) => {
+    if(e.data && e.data.type === "CONTENT_UPDATED") showUpdate();
+  });
+  // Recarga una sola vez cuando el nuevo SW toma el control
+  let reloading = false;
+  navigator.serviceWorker.addEventListener("controllerchange", () => {
+    if(reloading) return; reloading = true; location.reload();
+  });
+}
+
+render();   // primer cálculo
+</script>
+</body>
+</html>
